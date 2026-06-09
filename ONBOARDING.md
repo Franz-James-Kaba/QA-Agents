@@ -1,164 +1,173 @@
-# QA Automation Skills — PingMaster
+# QA Agents — Onboarding Guide
 
-Three Claude Code skills that form a complete automated QA pipeline:
-**generate → execute → report bugs**.
-
----
-
-## Skills Included
-
-| Skill | Trigger | What it does |
-|-------|---------|--------------|
-| `/test-case-generator` | "generate test cases" | Generates full Xray test hierarchy from sprint stories |
-| `/manual-executor` | "execute test cases" | Runs TCs via Playwright, screenshots every step, vision-based pass/fail |
-| `/bug-maester` | "report a bug" | Files structured Bug tickets from failures or natural language |
+Welcome. This guide gets you from zero to running your first automated QA session in Claude Code.
 
 ---
 
-## Prerequisites
+## What you're installing
 
-### Environment variables (required)
+Four Claude Code skills that automate the QA loop:
 
-| Variable | Purpose |
-|----------|---------|
-| `JIRA_EMAIL` | Your Atlassian account email |
-| `JIRA_API_TOKEN` | Atlassian API token — generate at https://id.atlassian.com/manage-profile/security/api-tokens |
+| Skill | What it does |
+|-------|--------------|
+| `qa-agent` | **Primary skill.** Plan test cases, execute them in a browser, file bugs — all in one skill with three modes. |
+| `test-case-generator` | Standalone TC generator |
+| `manual-executor` | Standalone Playwright test runner |
+| `bug-maester` | Standalone bug filer |
 
-### Xray MCP server (required for all three skills)
+Start with `qa-agent`. The others are specialist tools for when you need finer control.
 
-The skills use a local Xray Cloud MCP server for GraphQL operations. Add to your `.claude/mcp.json`:
+---
+
+## Step 1 — Clone the repo
+
+```bash
+git clone https://github.com/Franz-James-Kaba/QA-Agents.git
+cd QA-Agents
+```
+
+---
+
+## Step 2 — Install the qa-agent skill
+
+**Mac/Linux:**
+```bash
+cp -r skills/qa-agent ~/.claude/skills/
+```
+
+**Windows (PowerShell):**
+```powershell
+xcopy /E /I skills\qa-agent "$env:USERPROFILE\.claude\skills\qa-agent"
+```
+
+To install all skills at once:
+
+**Mac/Linux:**
+```bash
+cp -r skills/qa-agent skills/test-case-generator skills/manual-executor skills/bug-maester ~/.claude/skills/
+```
+
+**Windows:**
+```powershell
+foreach ($s in @("qa-agent","test-case-generator","manual-executor","bug-maester")) {
+    xcopy /E /I "skills\$s" "$env:USERPROFILE\.claude\skills\$s"
+}
+```
+
+---
+
+## Step 3 — Connect the MCP servers
+
+Create (or update) `.claude/mcp.json` in your project root:
 
 ```json
 {
   "mcpServers": {
+    "jira": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-rovo"]
+    },
     "xray": {
-      "command": "python",
-      "args": ["xray-mcp/server.py"]
+      "type": "sse",
+      "url": "https://xray-mcp-server.vercel.app/sse"
     }
   }
 }
 ```
 
-The server file (`xray-mcp/server.py`) must exist in your project root. It handles authentication, token caching, and all Xray GraphQL mutations internally.
+> The Xray MCP server at `https://xray-mcp-server.vercel.app` is pre-deployed with shared credentials. No local Python server needed.
 
-### Playwright (manual-executor only)
+**Requires Node.js** for the Jira MCP (`npm --version` to check).
+
+---
+
+## Step 4 — Set your Atlassian credentials
+
+The skills need your email and API token to create Jira issues.
+
+Get your API token at: https://id.atlassian.com/manage-profile/security/api-tokens
+
+**Mac/Linux** (`~/.bashrc` or `~/.zshrc`):
+```bash
+export JIRA_EMAIL="you@yourcompany.com"
+export JIRA_API_TOKEN="your_token_here"
+```
+
+**Windows (PowerShell — persists across sessions):**
+```powershell
+[System.Environment]::SetEnvironmentVariable("JIRA_EMAIL", "you@yourcompany.com", "User")
+[System.Environment]::SetEnvironmentVariable("JIRA_API_TOKEN", "your_token_here", "User")
+```
+
+---
+
+## Step 5 — Install Playwright
+
+Required for `qa-agent` run mode and `manual-executor`:
 
 ```bash
 pip install playwright
 python -m playwright install chromium
 ```
 
-### Optional — test account credentials (manual-executor)
+---
 
-If not set, fresh accounts are **auto-provisioned** via the signup API on staging/UAT:
+## Step 6 — Restart Claude Code
 
-| Variable | Purpose |
-|----------|---------|
-| `QA_USERNAME` / `QA_PASSWORD` | Primary player test account |
-| `QA_USERNAME_2` / `QA_PASSWORD_2` | Secondary player (multi-player TCs) |
-| `QA_ADMIN_USERNAME` / `QA_ADMIN_PASSWORD` | Admin test account |
+Skills and MCP servers are loaded at startup. Restart after steps 2 and 3.
 
 ---
 
-## /test-case-generator
+## Step 7 — Run your first session
 
-Reads every story in the active sprint, analyses the description and acceptance criteria, and generates a complete Xray test artefact hierarchy — ready to execute.
+Open Claude Code in your project folder and try:
 
-**What it creates per story:**
-- Positive and negative Test Cases with full Action / Test Data / Expected Result steps
-- Test Set grouping all TCs for the story
-- Test Execution record
-- Test Plan for the sprint
-- Correct Xray issuelinks between all artefacts
-- Jira comment on stories that are too vague (skips them instead of generating weak tests)
-
-**Invoke:**
 ```
-/test-case-generator
-```
-or type: `generate test cases`, `create test plan`, `run test generator`
-
-**Output:** All issues created in your configured Jira/Xray project with steps populated.
-
----
-
-## /manual-executor
-
-Executes test cases step by step in a real Chromium browser. Takes a screenshot before and after every step, uses Claude's vision to assess pass/fail, and fires `/bug-maester` in the background for any failure.
-
-**What it does:**
-- Pulls TCs directly from Xray (`--from-xray`) or reads a local JSON file
-- Spawns parallel browser sessions by user role (player vs admin)
-- Auto-provisions fresh test accounts on staging — no `reset-db` endpoint needed
-- Captures screenshots to `output/screenshots/{RUN_ID}/`
-- Writes `results.json` + `run-report.md` to `output/results/{RUN_ID}/`
-- Uploads final results to the Xray Test Execution on completion
-
-**Invocation forms:**
-
-```bash
-# Pull TCs directly from Xray (recommended)
-/manual-executor --from-xray TBL-XXX --url http://your-staging-url --env staging
-
-# Use a local JSON file
-/manual-executor --input output/test-cases/TBL-XXX.json --url http://localhost:4200 --env local
-
-# Resume from a specific TC (skips all earlier ones)
-/manual-executor --from-xray TBL-XXX --url http://... --env staging --skip-to AMOB-YYY
+/plan TBL-123
 ```
 
-or type: `execute test cases`, `run manual tests`, `start test execution`
+Replace `TBL-123` with a real story key from your Jira board. The skill will:
+1. Fetch the story description and acceptance criteria
+2. Ask a few clarifying questions about the real implementation
+3. Generate positive + negative test cases
+4. Create a full Xray hierarchy (Test Cases → Test Set → Test Plan → Test Execution)
 
-**Output structure:**
+Then execute:
 ```
-output/
-  screenshots/{RUN_ID}/        ← one PNG per step
-  results/{RUN_ID}/
-    results.json               ← per-TC status + step details
-    run-report.md              ← markdown summary table
-    pw_runner.py               ← the generated Playwright script
+/run --from-xray TBL-123 --url http://your-staging-url --env staging
+```
+
+Then file bugs for any failures:
+```
+/bug TBL-611
 ```
 
 ---
 
-## /bug-maester
+## Quick reference
 
-Reports bugs against Jira in two modes. Every invocation first audits and repairs any existing open bug descriptions before creating new ones.
-
-### Mode 1 — Natural language intake
-
-Describe the bug in plain English. The skill infers as many fields as possible and asks only for what is genuinely missing:
-
-```
-report a bug: the Accept button on the challenge card disappears after page refresh
-```
-
-### Mode 2 — Auto-fill from Test Execution
-
-Fetches all FAILED TCs from an Xray execution, reads the test steps to populate Steps to Reproduce, and creates one Bug ticket per failure in parallel:
-
-```bash
-/bug-maester AMOB-217          # specific execution
-/bug-maester all               # all executions in the project
-```
-
-**Bug ticket format (6 sections):**
-1. Summary
-2. Environment (URL, browser, build)
-3. Steps to Reproduce (pulled from Xray TC steps)
-4. Expected Result
-5. Actual Result
-6. Logs / Screenshots
-
-**Invoke:** `report a bug`, `log a bug`, `create bug`, `/bug-maester`, `/bug-maester <EXEC_KEY>`
+| Command | What happens |
+|---------|-------------|
+| `/plan TBL-123` | Generate TCs for story TBL-123 |
+| `/run --from-xray TBL-123 --url <url> --env staging` | Execute all TCs against a URL |
+| `/bug TBL-611` | File bugs for failures in Test Execution TBL-611 |
+| `/bug all` | File bugs for all open failures in the project |
+| `report a bug: <description>` | File a single bug from plain English |
 
 ---
 
-## Typical workflow
+## Troubleshooting
 
-```
-1. /test-case-generator          → TCs + Test Set + Execution created in Xray
-2. /manual-executor --from-xray TBL-XXX --url <staging> --env staging
-                                 → Browser runs all TCs, screenshots every step
-3. /bug-maester <EXEC_KEY>       → Bug tickets filed for any failures
-```
+**Skills not appearing**
+→ Confirm `~/.claude/skills/qa-agent/SKILL.md` exists, then restart Claude Code.
+
+**`mcp__xray__*` tools not available**
+→ Check `.claude/mcp.json` has the `xray` entry and restart Claude Code.
+
+**`mcp__jira__*` tools not available**
+→ Check the `jira` entry is in `.claude/mcp.json`. Confirm Node.js is installed: `node --version`.
+
+**Browser automation errors**
+→ Confirm Playwright is installed: `python -m playwright install chromium`
+
+For more detail, see [README.md](README.md).
