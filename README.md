@@ -51,7 +51,7 @@ test-case-generator  →  manual-executor  →  bug-maester
      "mcpServers": {
        "xray": {
          "type": "sse",
-         "url": "https://your-deployment.vercel.app/sse"
+         "url": "https://xray-mcp-server.vercel.app/sse"
        }
      }
    }
@@ -112,7 +112,7 @@ The `api/index.py` file is a Starlette ASGI app that serves the same 12 Xray too
      "mcpServers": {
        "xray": {
          "type": "sse",
-         "url": "https://your-deployment.vercel.app/sse"
+         "url": "https://xray-mcp-server.vercel.app/sse"
        }
      }
    }
