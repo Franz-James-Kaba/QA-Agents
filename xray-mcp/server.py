@@ -5,12 +5,16 @@ xray-mcp/server.py — Xray Cloud MCP Server for Claude Code.
 Exposes the following tools:
   authenticate                     — verify credentials, return token metadata
   add_test_step                    — add a step to an Xray Test issue
+  update_test_step                 — edit an existing step (action/data/result) by its ID
+  remove_test_step                 — delete a step from a Test issue by its ID
   add_tests_to_test_set            — link Test issues into a Test Set
   add_tests_to_test_execution      — link Test issues into a Test Execution
   add_tests_to_test_plan           — link Test issues into a Test Plan
   add_test_executions_to_test_plan — link Test Executions into a Test Plan
   get_test_steps                   — retrieve steps for a Test issue
   get_test_execution_failures      — retrieve failed results from a Test Execution
+  get_test_runs                    — retrieve all test runs (with run IDs) from a Test Execution
+  update_test_run_status           — set PASS/FAIL/TODO/EXECUTING on a test run by its run ID
 
 Authentication: Xray Cloud client-credentials flow (no manual token management needed).
 All issue IDs must be numeric Jira IDs (e.g. "113080"), NOT keys (e.g. "TBL-131").
@@ -114,6 +118,93 @@ async def list_tools() -> list[Tool]:
                     "result":  {"type": "string", "description": "Expected observable outcome"},
                 },
                 "required": ["issue_id", "action", "result"],
+            },
+        ),
+        Tool(
+            name="update_test_step",
+            description=(
+                "Edit an existing step on an Xray Test issue. "
+                "Requires the numeric issue_id and the step_id returned by add_test_step or get_test_steps. "
+                "Only the fields provided are updated."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_id": {
+                        "type": "string",
+                        "description": "Numeric Jira issue ID of the Test (e.g. '113080')",
+                    },
+                    "step_id": {
+                        "type": "string",
+                        "description": "ID of the step to update (returned by get_test_steps)",
+                    },
+                    "action":  {"type": "string", "description": "Updated action text"},
+                    "data":    {"type": "string", "description": "Updated test data (use '-' if none)"},
+                    "result":  {"type": "string", "description": "Updated expected result"},
+                },
+                "required": ["issue_id", "step_id"],
+            },
+        ),
+        Tool(
+            name="remove_test_step",
+            description=(
+                "Delete a step from an Xray Test issue by its step ID. "
+                "Use get_test_steps first to find the step ID."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_id": {
+                        "type": "string",
+                        "description": "Numeric Jira issue ID of the Test",
+                    },
+                    "step_id": {
+                        "type": "string",
+                        "description": "ID of the step to remove",
+                    },
+                },
+                "required": ["issue_id", "step_id"],
+            },
+        ),
+        Tool(
+            name="get_test_runs",
+            description=(
+                "Retrieve all test runs from a Test Execution, including their run IDs, "
+                "test issue IDs, and current status. Use the run ID with update_test_run_status "
+                "to record PASS/FAIL results."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "issue_id": {
+                        "type": "string",
+                        "description": "Numeric Jira issue ID of the Test Execution",
+                    },
+                },
+                "required": ["issue_id"],
+            },
+        ),
+        Tool(
+            name="update_test_run_status",
+            description=(
+                "Set the status of a specific test run inside a Test Execution. "
+                "Valid statuses: TODO, EXECUTING, PASS, FAIL, ABORTED. "
+                "Call get_test_runs first to obtain the run ID for each test."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "run_id": {
+                        "type": "string",
+                        "description": "The test run ID (from get_test_runs, not the issue key)",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["TODO", "EXECUTING", "PASS", "FAIL", "ABORTED"],
+                        "description": "New status to set on the test run",
+                    },
+                },
+                "required": ["run_id", "status"],
             },
         ),
         Tool(
@@ -301,6 +392,97 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             )
             _raise_on_errors(resp)
             return [TextContent(type="text", text=json.dumps(resp["data"]["addTestExecutionsToTestPlan"]))]
+
+        # ── update_test_step ─────────────────────────────────────────────────
+        elif name == "update_test_step":
+            step_fields: dict = {}
+            if "action" in arguments:
+                step_fields["action"] = arguments["action"]
+            if "data" in arguments:
+                step_fields["data"] = arguments["data"]
+            if "result" in arguments:
+                step_fields["result"] = arguments["result"]
+            resp = _gql(
+                """
+                mutation UpdateTestStep($issueId: String!, $stepId: String!, $step: UpdateStepInput!) {
+                  updateTestStep(issueId: $issueId, stepId: $stepId, step: $step) {
+                    id
+                    action
+                    data
+                    result
+                  }
+                }
+                """,
+                {
+                    "issueId": arguments["issue_id"],
+                    "stepId":  arguments["step_id"],
+                    "step":    step_fields,
+                },
+            )
+            _raise_on_errors(resp)
+            return [TextContent(type="text", text=json.dumps(resp["data"]["updateTestStep"]))]
+
+        # ── remove_test_step ─────────────────────────────────────────────────
+        elif name == "remove_test_step":
+            resp = _gql(
+                """
+                mutation RemoveTestStep($issueId: String!, $stepId: String!) {
+                  removeTestStep(issueId: $issueId, stepId: $stepId)
+                }
+                """,
+                {
+                    "issueId": arguments["issue_id"],
+                    "stepId":  arguments["step_id"],
+                },
+            )
+            _raise_on_errors(resp)
+            return [TextContent(type="text", text=json.dumps({"removed": True, "step_id": arguments["step_id"]}))]
+
+        # ── get_test_runs ────────────────────────────────────────────────────
+        elif name == "get_test_runs":
+            resp = _gql(
+                """
+                query GetTestRuns($issueId: String!) {
+                  getTestExecution(issueId: $issueId) {
+                    tests(limit: 100) {
+                      results {
+                        id
+                        status { name color }
+                        test { issueId summary }
+                      }
+                    }
+                  }
+                }
+                """,
+                {"issueId": arguments["issue_id"]},
+            )
+            _raise_on_errors(resp)
+            runs = (
+                (resp.get("data", {}).get("getTestExecution") or {})
+                .get("tests", {})
+                .get("results") or []
+            )
+            return [TextContent(type="text", text=json.dumps({"runs": runs, "total": len(runs)}))]
+
+        # ── update_test_run_status ───────────────────────────────────────────
+        elif name == "update_test_run_status":
+            resp = _gql(
+                """
+                mutation UpdateTestRunStatus($id: String!, $status: String!) {
+                  updateTestRunStatus(id: $id, status: $status)
+                }
+                """,
+                {
+                    "id":     arguments["run_id"],
+                    "status": arguments["status"],
+                },
+            )
+            _raise_on_errors(resp)
+            return [TextContent(type="text", text=json.dumps({
+                "updated": True,
+                "run_id": arguments["run_id"],
+                "status": arguments["status"],
+            }))]
 
         # ── get_test_steps ───────────────────────────────────────────────────
         elif name == "get_test_steps":
