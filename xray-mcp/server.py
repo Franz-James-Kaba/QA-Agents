@@ -188,7 +188,7 @@ async def list_tools() -> list[Tool]:
             name="update_test_run_status",
             description=(
                 "Set the status of a specific test run inside a Test Execution. "
-                "Valid statuses: TODO, EXECUTING, PASS, FAIL, ABORTED. "
+                "Valid statuses: TODO, EXECUTING, PASSED, FAILED, ABORTED. "
                 "Call get_test_runs first to obtain the run ID for each test."
             ),
             inputSchema={
@@ -200,7 +200,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["TODO", "EXECUTING", "PASS", "FAIL", "ABORTED"],
+                        "enum": ["TODO", "EXECUTING", "PASSED", "FAILED", "ABORTED"],
                         "description": "New status to set on the test run",
                     },
                 },
@@ -442,27 +442,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "get_test_runs":
             resp = _gql(
                 """
-                query GetTestRuns($issueId: String!) {
-                  getTestExecution(issueId: $issueId) {
-                    tests(limit: 100) {
-                      results {
-                        id
-                        status { name color }
-                        test { issueId summary }
-                      }
+                query GetTestRuns($testExecIssueIds: [String], $limit: Int!) {
+                  getTestRuns(testExecIssueIds: $testExecIssueIds, limit: $limit) {
+                    total
+                    results {
+                      id
+                      status { name color }
+                      test { issueId jira(fields: ["key", "summary"]) }
+                      testExecution { issueId }
                     }
                   }
                 }
                 """,
-                {"issueId": arguments["issue_id"]},
+                {"testExecIssueIds": [arguments["issue_id"]], "limit": 100},
             )
             _raise_on_errors(resp)
-            runs = (
-                (resp.get("data", {}).get("getTestExecution") or {})
-                .get("tests", {})
-                .get("results") or []
-            )
-            return [TextContent(type="text", text=json.dumps({"runs": runs, "total": len(runs)}))]
+            data = resp.get("data", {}).get("getTestRuns") or {}
+            runs = data.get("results") or []
+            return [TextContent(type="text", text=json.dumps({"runs": runs, "total": data.get("total", len(runs))}))]
 
         # ── update_test_run_status ───────────────────────────────────────────
         elif name == "update_test_run_status":
@@ -509,24 +506,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "get_test_execution_failures":
             resp = _gql(
                 """
-                query GetTestExecutionResults($issueId: String!) {
-                  getTestExecution(issueId: $issueId) {
-                    tests(limit: 100) {
-                      results {
-                        issueId
-                        status { name color }
-                        test { issueId summary }
-                      }
+                query GetTestExecutionResults($testExecIssueIds: [String], $limit: Int!) {
+                  getTestRuns(testExecIssueIds: $testExecIssueIds, limit: $limit) {
+                    total
+                    results {
+                      id
+                      status { name color }
+                      test { issueId jira(fields: ["key", "summary"]) }
                     }
                   }
                 }
                 """,
-                {"issueId": arguments["issue_id"]},
+                {"testExecIssueIds": [arguments["issue_id"]], "limit": 100},
             )
             _raise_on_errors(resp)
-            all_tests = resp["data"]["getTestExecution"]["tests"]["results"]
-            failures = [t for t in all_tests if t["status"]["name"] in ("FAIL", "FAILED")]
-            return [TextContent(type="text", text=json.dumps({"failures": failures, "total": len(all_tests)}))]
+            data = resp.get("data", {}).get("getTestRuns") or {}
+            all_runs = data.get("results") or []
+            failures = [t for t in all_runs if t["status"]["name"] in ("FAIL", "FAILED")]
+            return [TextContent(type="text", text=json.dumps({"failures": failures, "total": data.get("total", len(all_runs))}))]
 
         else:
             raise ValueError(f"Unknown tool: {name}")
