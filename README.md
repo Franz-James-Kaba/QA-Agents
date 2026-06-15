@@ -9,6 +9,14 @@ A complete automated QA pipeline for Jira + Xray Cloud projects, built as Claude
 
 ---
 
+## What's New
+
+- **🔐 Microsoft SSO bypass.** Run mode now authenticates through Microsoft Entra ID (Azure AD) automatically — email → password → number-match MFA → TOTP — and reuses the session across the whole run. No more manual login, no per-test-case auth. See [SSO Authentication](#sso-authentication).
+- **⚡ Orchestrator + worker architecture.** The skill runs as a two-tier system: a **power model (Opus) orchestrator** keeps the judgment work and delegates all mechanical, parallelizable work to cheaper **Sonnet workers**. Big token savings with a quality-preserving escalation path. See [Architecture](#architecture-orchestrator--workers).
+- **📊 Silent self-assessment.** After every session the agent grades its own performance against an objective rubric and files a structured report to the maintainer — a continuous quality loop.
+
+---
+
 ## Skills
 
 | Skill | Invoke with | What it does |
@@ -145,9 +153,12 @@ Launches a Playwright browser, runs each TC step by step with before/after scree
 
 ```
 /run --from-xray TBL-123 --url http://your-staging-url --env staging
+/run --from-xray TBL-123 --url https://app.example.com --sso     ← Microsoft SSO apps
 execute tests for TBL-456 against http://staging.example.com
 run manual tests
 ```
+
+For apps behind Microsoft login, add `--sso` (or just let run mode auto-detect the redirect). See [SSO Authentication](#sso-authentication).
 
 ### Bug mode — file bug tickets
 
@@ -172,6 +183,92 @@ report a bug: the login button stays disabled when the form is valid
 3. /bug TBL-611
    → Bug tickets filed for each failure, linked to failing TCs and the story
 ```
+
+---
+
+## SSO Authentication
+
+Many enterprise apps sit behind Microsoft Entra ID (Azure AD) with MFA — a wall that normally breaks browser automation. Run mode handles it with a bundled, battle-tested script (`skills/qa-agent/scripts/ms_sso_auth.py`).
+
+### How it works
+
+```
+/run --from-xray TBL-123 --url https://your-app --sso
+        │
+   detects Microsoft redirect (or you pass --sso)
+        │
+   authenticates ONCE:
+     email → password → number-match MFA bypass → TOTP code → save session
+        │
+   every test case reuses output/auth/storage_state.json
+   (auth never repeats per test — zero per-TC overhead)
+```
+
+The full flow is automated: it enters the email and password, clicks **"I can't use my Microsoft Authenticator app right now"** on the number-match screen, selects **"Use a verification code"**, generates the current TOTP from your test account's secret, and saves the authenticated browser session. If the session expires mid-run, it re-authenticates automatically.
+
+### Setup
+
+Set three environment variables for your **test account** (never a personal account):
+
+**Mac/Linux:**
+```bash
+export TEST_EMAIL="testuser@yourcompany.com"
+export TEST_PASSWORD="your_test_password"
+export TEST_TOTP_SECRET="base32secretfromauthenticator"
+```
+
+**Windows (PowerShell):**
+```powershell
+[System.Environment]::SetEnvironmentVariable("TEST_EMAIL", "testuser@yourcompany.com", "User")
+[System.Environment]::SetEnvironmentVariable("TEST_PASSWORD", "your_test_password", "User")
+[System.Environment]::SetEnvironmentVariable("TEST_TOTP_SECRET", "base32secretfromauthenticator", "User")
+```
+
+> **`TEST_TOTP_SECRET`** is the Base32 seed shown when you set up the authenticator for the test account (the same value an `otp.secret` config would hold). The script uses `pyotp` — RFC 6238, identical to Google Authenticator / `com.warrenstrange:googleauth`.
+
+Install the dependency:
+```bash
+pip install pyotp
+```
+
+### Run it standalone (to verify)
+
+```bash
+python skills/qa-agent/scripts/ms_sso_auth.py \
+  --url https://your-app --output output/auth/storage_state.json
+# add --headed to watch the browser
+```
+
+A successful run saves ~22 cookies plus app localStorage to `storage_state.json`. Full details and troubleshooting: `skills/qa-agent/references/run-sso-profile.md`.
+
+---
+
+## Architecture: Orchestrator + Workers
+
+`qa-agent` runs as a **two-tier system** for token efficiency. The dispatcher is the **orchestrator** (run it on a power model like Opus); it keeps the judgment work and delegates everything mechanical to cheaper **Sonnet workers**.
+
+```
+┌────────────────────────────────────────────────────────┐
+│  ORCHESTRATOR  (Opus)                                    │
+│  judgment · synthesis · user dialogue · final decisions  │
+└───────────┬───────────────┬───────────────┬────────────┘
+            ▼               ▼               ▼
+      [Sonnet worker] [Sonnet worker] [Sonnet worker]
+       one story /      mechanical,     returns
+       role / bug       self-contained  structured output
+```
+
+| Mode | Orchestrator keeps | Sonnet worker does (1 per unit, parallel) |
+|------|--------------------|-------------------------------------------|
+| **plan** | clarity scoring, clarifying dialogue, coverage strategy | writes the TC steps + ADF and creates Xray artefacts for one story |
+| **run** | TC resolution, SSO pre-auth, result merge, early-abort | executes one role's TCs in the browser, returns raw results |
+| **bug** | audit, dedupe guard, severity, which bugs to file | writes + links + transitions one 6-section bug ticket |
+
+**Why it saves tokens:** the bulk of output (dozens of TC steps, long bug descriptions, many execution steps) is mechanical. Opus costs ~5× Sonnet per token, so moving that volume to Sonnet while reserving Opus for high-leverage judgment is where the savings come from.
+
+**Quality is preserved by an escalation path:** a worker that hits a low-confidence decision (an ambiguous screenshot, a contradicting acceptance criterion) flags `needs_orchestrator_review` instead of guessing, and the orchestrator resolves just those cases on the power model. The easy 90% stays on Sonnet; the hard 10% gets Opus judgment.
+
+> **To get the full benefit**, run the qa-agent session on Opus. Worker delegation happens automatically via the Agent tool's `model` parameter. Details: `skills/qa-agent/references/orchestrator-protocol.md`.
 
 ---
 
