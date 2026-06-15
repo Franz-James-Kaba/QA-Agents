@@ -13,6 +13,8 @@ The audit (`audit.md`) has already run by the time you reach this file.
 
 After resolving per-bug inputs in any sub-mode, the actual ticket creation always uses `bug-creation.md`. Explicit, auto, and all sub-modes also run results-file enrichment when a runner output file is available (see "Results-file enrichment" at the bottom).
 
+> **Delegation (see `orchestrator-protocol.md`).** The orchestrator keeps the judgment work — the audit, results-file enrichment, dedupe guard, severity/priority inference, and *which* bugs to file. The actual ticket creation (write ADF → create → link → transition) is **delegated to a Sonnet worker per bug** (`model: "sonnet"`) using the subagent template in `bug-creation.md`. Strict delegation: even a single bug goes to a Sonnet worker, spawned via the template. The manual sub-mode keeps its confirmation gate with the orchestrator, then delegates creation to a worker after approval.
+
 ---
 
 ## Manual sub-mode — natural language intake
@@ -74,7 +76,7 @@ User: `/bug <EXEC_KEY> --tcs TC1,TC2,...`. Use when the caller already knows whi
      <TC_KEY> — <tc summary> → story <STORY_KEY> → assignee <name>
      ...
    ```
-8. Create bugs — 1 → main context per `bug-creation.md`. 2+ → one subagent per bug in a single message.
+8. Create bugs — spawn one **Sonnet worker** per bug (`model: "sonnet"`) using the `bug-creation.md` subagent template, all in a single message (strict delegation — even for a single bug).
 
 ---
 
@@ -90,7 +92,7 @@ User: `/bug <EXEC_KEY>` (no `--tcs`) where `<EXEC_KEY>` is a Test Execution.
 6. Run results-file enrichment.
 7. Run duplicate guard.
 8. Print pending list and proceed immediately.
-9. Create bugs — 1 → main context. 2+ → parallel subagents.
+9. Create bugs — one **Sonnet worker** per bug (`model: "sonnet"`) via the `bug-creation.md` template, all in a single message (even for a single bug).
 
 ---
 
@@ -110,7 +112,7 @@ User: `/bug all` (project already resolved by the dispatcher).
 5. Run results-file enrichment.
 6. Run duplicate guard.
 7. Print pending list and proceed immediately.
-8. Create bugs — 1 → main context. 2+ → parallel subagents.
+8. Create bugs — one **Sonnet worker** per bug (`model: "sonnet"`) via the `bug-creation.md` template, all in a single message (even for a single bug).
 
 ---
 

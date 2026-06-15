@@ -161,7 +161,9 @@ TCs by role: <role-A>: <N>  <role-B>: <M>  ...
 
 ### Phase R6 — Execute
 
-Group TCs by `user` (role). For each role, spawn one execution subagent **in parallel** (single message). Each subagent gets:
+> **Delegation (see `orchestrator-protocol.md`).** Execution subagents are **Sonnet workers** (`model: "sonnet"`) — strict delegation, one per role even if there's only one role. They do the browser execution and clear-cut pass/fail vision. When a screenshot is genuinely ambiguous, the worker marks that step `status: "REVIEW"` with `needs_orchestrator_review: true` and a reason; the orchestrator (power model) re-assesses only those screenshots during the merge (R6 → R8) and finalizes PASS/FAIL.
+
+Group TCs by `user` (role). For each role, spawn one Sonnet execution worker **in parallel** (single message). Each worker gets:
 
 - Its role's credentials (from env)
 - Its TC subset
@@ -171,7 +173,7 @@ Group TCs by `user` (role). For each role, spawn one execution subagent **in par
 
 Read `run-playwright-runner.md` for the full runner skeleton and the subagent template. The runner takes a before/after screenshot for every step, then uses Claude vision to assess pass/fail against the `expected` field.
 
-Each subagent writes `output/results/<RUN_ID>/results-<role>.json`. Main context waits for all to finish, then merges into `output/results/<RUN_ID>/results.json`.
+Each worker writes `output/results/<RUN_ID>/results-<role>.json`. The orchestrator waits for all to finish, then **re-assesses every step marked `REVIEW`** by reading its after-screenshot itself (power-model vision) and finalizing PASS/FAIL, before merging into `output/results/<RUN_ID>/results.json`.
 
 ### Phase R7 — File bugs for failures (background)
 

@@ -1,6 +1,6 @@
 # Bug Creation
 
-Single source of truth for creating one bug ticket. Used both inline (1 bug) and via the subagent template at the bottom (2+ bugs in parallel).
+Single source of truth for creating one bug ticket. Always executed by a Sonnet worker via the subagent template at the bottom (one worker per bug, strict delegation — see `orchestrator-protocol.md`).
 
 Steps run in order: Create → Attach → Link → Transition.
 
@@ -95,7 +95,9 @@ else:
 
 ## Bug Creation Subagent Template
 
-Use one subagent per bug when 2+ bugs are being created in explicit/auto/all sub-mode. Send all subagents in **ONE message**.
+Spawn **one Sonnet worker (`model: "sonnet"`) per bug** for the actual ticket creation — strict delegation per `orchestrator-protocol.md`, even for a single bug. Send all workers in **ONE message** so they run concurrently. The orchestrator does the audit, enrichment, dedupe, and severity decisions first, then hands each resolved bug to a worker via this template.
+
+The "Steps run in order" flow above (Create → Attach → Link → Transition) is what each worker executes.
 
 ```
 You are creating one Jira Bug ticket for a failing test. All data is provided below.

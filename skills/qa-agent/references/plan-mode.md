@@ -77,10 +77,12 @@ For each story, read `plan-clarity-check.md` and run the check. If the story is 
 
 ## Step P4 — Per-story implementation dialogue + test case generation
 
+> **Delegation (see `orchestrator-protocol.md`).** The dialogue (P4.1) needs the user and stays with the orchestrator. The actual TC generation (P4.2) is mechanical and is **delegated to a Sonnet worker per story** — see Step P5, which fuses generation + Xray creation into one worker per story. The orchestrator gathers dialogue context for every story first, then fans out.
+
 For each story that passed the clarity check:
 
-1. Read `plan-implementation-dialogue.md` and run the dialogue with the user. This gathers real screen names, field labels, button text, API endpoints, and error messages so test steps reflect the actual app.
-2. Once the dialogue completes, generate the test cases. Format and coverage rules are below.
+1. Read `plan-implementation-dialogue.md` and run the dialogue with the user (orchestrator). This gathers real screen names, field labels, button text, API endpoints, and error messages so test steps reflect the actual app. **Record the gathered context per story** — it is handed to that story's worker.
+2. TC generation itself is performed by the story's Sonnet worker in Step P5, using the coverage rules and format below. The orchestrator does NOT write TC steps inline.
 
 ### Coverage rules
 
@@ -128,9 +130,17 @@ Rules:
 - Test data must be concrete values, never placeholders like `<valid email>`
 - Expected results must be observable (visible UI state, message text, navigation destination)
 
-## Step P5 — Create the Xray artefacts
+## Step P5 — Generate TCs + create Xray artefacts (Sonnet workers)
 
-Once Phase P4 is complete for **every** story (every story has finished its dialogue and generated test cases), read `plan-xray-artifacts.md` and follow it. Single-story → main context. Two or more → spawn one subagent per story in a single message.
+Once the dialogue (P4.1) is complete for **every** story, fan out. **Strict delegation:** spawn **one Sonnet worker per story** (`model: "sonnet"`), all in a single message — even if there is only one story. Never generate TCs or create artefacts in the orchestrator context.
+
+Each worker:
+1. Receives, inline: the story text + acceptance criteria, the **dialogue context** gathered in P4.1, the coverage rules + TC format below, and the pre-resolved `cloud_id` / `TESTPLAN_KEY` / `TESTPLAN_ID` / project key.
+2. Reads `plan-xray-artifacts.md` (absolute path) for the artefact-creation flow.
+3. Generates the positive + negative TCs (coverage rules + format below), then creates that story's Test Set, Test Cases, and Test Execution, links them, and adds the Execution to the Test Plan.
+4. Returns structured output only: story key, TC count (pos/neg), Test Set key, Test Execution key, and `needs_orchestrator_review` + `review_reason` if the ACs and dialogue context conflict.
+
+The orchestrator collects worker outputs for the final report (P6) and resolves any escalated stories itself.
 
 ## Step P6 — Final report
 
@@ -172,3 +182,4 @@ If any subagent returned non-empty `ERRORS`, list under a `Warnings:` section. I
 - **Each step has concrete Action, concrete Test Data, specific Expected Result.**
 - **Phase P4 must complete for all stories before Phase P5 spawns** — never interleave dialogue with artefact creation.
 - **Every Test Execution is linked to its Test Set** (Relates link, see `conventions.md`) and **added to the Test Plan** — never skip either.
+- **TC generation is always delegated to a Sonnet worker per story** (P5) — the orchestrator never writes TC steps inline, even for a single story. See `orchestrator-protocol.md`.

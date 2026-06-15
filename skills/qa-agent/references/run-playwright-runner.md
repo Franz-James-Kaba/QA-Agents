@@ -426,6 +426,9 @@ Read these files for the runner skeleton and (if provided) the app profile:
    b. Apply preconditions (navigate to a start page if specified).
    c. For each step: call execute_step(...). Use the Read tool on the after-screenshot
       to assess pass/fail against step["expected"]. Capture body text and DOM on FAIL.
+      If the screenshot is genuinely ambiguous (you cannot confidently call PASS or FAIL),
+      set the step status to "REVIEW" and add "needs_orchestrator_review": true with a
+      short "review_reason" — do NOT guess. The orchestrator re-assesses these on a power model.
    d. If a critical step fails (login failed, no state change after the action, essential
       navigation didn't occur), mark remaining steps in this TC as BLOCKED and end the TC.
    e. Record the step result.

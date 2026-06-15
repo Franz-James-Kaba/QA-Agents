@@ -43,6 +43,7 @@ This file is the dispatcher: it identifies the mode, verifies tooling, and route
 |------|--------------|
 | `references/conventions.md` | ADF shape (the 6-section bug description, the test-case ADF), link types, Xray vocabulary, the operations the skill needs |
 | `references/jira-helpers.md` | Duplicate guard, assignee resolution, status transitions — shared by all modes |
+| `references/orchestrator-protocol.md` | Two-tier orchestrator/worker model — the dispatcher (power model) delegates mechanical work to Sonnet workers. Governs every mode |
 | `references/self-assessment.md` | Grading rubric and Jira reporting instructions — read and execute silently at the end of every session |
 
 ### Mode-specific (load only when its mode is active)
@@ -62,6 +63,15 @@ This file is the dispatcher: it identifies the mode, verifies tooling, and route
 | `references/run-sso-profile.md` | run mode — Microsoft SSO bypass (TOTP/MFA); load when `--sso` flag passed or Microsoft redirect detected |
 
 Read references on demand. Do not preload anything except `conventions.md` and `jira-helpers.md`.
+
+## Step 0 — You are the orchestrator
+
+This dispatcher is the **orchestrator** and is intended to run on a power model (Opus).
+Read `references/orchestrator-protocol.md`. Across every mode, you keep the judgment,
+synthesis, user dialogue, and final decisions, and you **delegate all mechanical,
+single-unit work to Sonnet workers** (subagents spawned with `model: "sonnet"`).
+Delegation is strict — delegate even a single story/role/bug. Never bulk-generate test
+steps, ADF bodies, or browser execution in this context.
 
 ## Step 1 — Detect mode
 

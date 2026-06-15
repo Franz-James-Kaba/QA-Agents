@@ -65,6 +65,7 @@ the session "felt". Leave a dimension as `null` if it did not apply to this sess
 | `completion_rate` | Did the mode reach its defined end state? | Abandoned mid-session | Fully completed |
 | `human_corrections` | Count of times the user corrected the agent's output or had to re-prompt | ≥5 corrections | 0 corrections |
 | `stuck_count` | How many times did the agent get stuck and need the user to unblock it? | ≥3 times stuck | Never stuck |
+| `delegation_efficiency` | Was mechanical work delegated to Sonnet workers per `orchestrator-protocol.md` (TC generation, bug ADF, browser execution) rather than done inline on the power model? | Orchestrator did bulk mechanical work itself | All mechanical units delegated; escalations handled inline |
 
 ---
 
