@@ -59,6 +59,7 @@ This file is the dispatcher: it identifies the mode, verifies tooling, and route
 | `references/run-mode.md` | run mode dispatcher |
 | `references/run-playwright-runner.md` | run mode — the universal Playwright runner skeleton |
 | `references/run-app-profile.md` | run mode — how to capture and use a per-app selector profile |
+| `references/run-sso-profile.md` | run mode — Microsoft SSO bypass (TOTP/MFA); load when `--sso` flag passed or Microsoft redirect detected |
 
 Read references on demand. Do not preload anything except `conventions.md` and `jira-helpers.md`.
 
