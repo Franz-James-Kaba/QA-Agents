@@ -16,11 +16,23 @@ Universal — no app-specific selectors. App quirks come from the profile, if an
 import os, json, time, re
 from playwright.sync_api import sync_playwright, Page
 
-def launch_browser(run_id, base_url, headed=False, group_label=""):
-    """Launch Chromium and return (playwright, browser, context, page)."""
+def launch_browser(run_id, base_url, headed=False, group_label="", storage_state=None):
+    """
+    Launch Chromium and return (playwright, browser, context, page).
+
+    If `storage_state` is a path to a Playwright storage-state JSON (produced by
+    an SSO pre-auth step, e.g. scripts/ms_sso_auth.py), it is loaded into the
+    context so the session is already authenticated — the runner then skips login
+    entirely. See references/run-sso-profile.md.
+    """
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=not headed, slow_mo=80)
-    context = browser.new_context(viewport={"width": 1280, "height": 800})
+    ctx_opts = {"viewport": {"width": 1280, "height": 800}}
+    if storage_state and os.path.exists(storage_state):
+        ctx_opts["storage_state"] = storage_state
+        if group_label:
+            print(f"[{group_label}] Loaded SSO storage state from {storage_state}")
+    context = browser.new_context(**ctx_opts)
     page = context.new_page()
 
     # Always accept native dialogs — many apps use window.confirm() and they
@@ -280,11 +292,47 @@ def match_profile_selector(action, app_profile, kind):
     return None
 
 
-def do_login(page, action, base_url, app_profile=None):
+def sso_session_active(page, base_url):
+    """
+    True if the context already holds an authenticated SSO session — i.e. visiting
+    the app does NOT bounce to an identity provider. Used to skip do_login when a
+    storage_state was loaded (see references/run-sso-profile.md).
+    """
+    try:
+        page.goto(base_url, wait_until="domcontentloaded", timeout=30000)
+        wait_stable(page)
+        idp_hosts = ("login.microsoftonline.com", "login.live.com",
+                     "sts.", "okta.com", "auth0.com", "accounts.google.com")
+        return not any(h in page.url for h in idp_hosts)
+    except Exception:
+        return False
+
+
+def do_login(page, action, base_url, app_profile=None, storage_state=None):
     """
     Re-authenticate mid-run. Uses the profile's `login` recipe if provided;
     otherwise tries common form patterns.
+
+    If `storage_state` is set and the session is already active, this is a no-op
+    (the SSO pre-auth step already established the session). If the SSO session
+    has expired mid-run, re-run the SSO auth script and reload the page.
     """
+    # Mid-run login verbs reach here without the param — fall back to the env var
+    # the run-mode SSO phase exports.
+    storage_state = storage_state or os.environ.get("SSO_STORAGE_STATE", "")
+    if storage_state:
+        if sso_session_active(page, base_url):
+            return  # already authenticated via the loaded storage_state
+        # Session expired — re-run the SSO auth script and reload context state.
+        import subprocess, sys
+        sso_script = os.environ.get("SSO_AUTH_SCRIPT", "")
+        if sso_script and os.path.exists(sso_script):
+            subprocess.run([sys.executable, sso_script,
+                            "--url", base_url, "--output", storage_state], check=False)
+            page.goto(base_url, wait_until="domcontentloaded")
+            wait_stable(page)
+        return
+
     is_admin = bool(re.search(r"admin", action, re.I))
     if app_profile and "login" in app_profile:
         role_key = "admin" if is_admin else "default"
@@ -356,6 +404,7 @@ Read these files for the runner skeleton and (if provided) the app profile:
 - Password env var: <ROLE_PASSWORD_ENV>
 - Base URL: <BASE_URL>
 - Run ID: <RUN_ID>
+- SSO storage state: <STORAGE_STATE_PATH or "none">   ← if set, the session is pre-authenticated
 - Output paths:
     screenshots: output/screenshots/<RUN_ID>/
     results:     output/results/<RUN_ID>/results-<ROLE>.json
@@ -367,10 +416,13 @@ Read these files for the runner skeleton and (if provided) the app profile:
 ## Procedure
 1. Write the runner module to output/results/<RUN_ID>/pw_runner.py using the code in
    run-playwright-runner.md (the Core helpers + Step execution sections, verbatim).
-2. Import it: pw, browser, ctx, page = launch_browser(<RUN_ID>, <BASE_URL>, headed=<HEADED>, group_label="<ROLE>")
-3. Authenticate via do_login(page, "login as <ROLE>", <BASE_URL>, app_profile).
+2. Import it: pw, browser, ctx, page = launch_browser(<RUN_ID>, <BASE_URL>, headed=<HEADED>, group_label="<ROLE>", storage_state=<STORAGE_STATE_PATH or None>)
+3. Authenticate via do_login(page, "login as <ROLE>", <BASE_URL>, app_profile, storage_state=<STORAGE_STATE_PATH or None>).
+   - If SSO storage state is set, do_login is a no-op (session already established) — DO NOT clear cookies before the first TC.
 4. For each TC:
-   a. Unless preserveSession=True, clear_session(page) and re-auth.
+   a. Unless preserveSession=True OR SSO storage state is set, clear_session(page) and re-auth.
+      With SSO storage state, NEVER clear_session — it would destroy the SSO cookies. Re-auth is handled
+      automatically by do_login only if the session expired.
    b. Apply preconditions (navigate to a start page if specified).
    c. For each step: call execute_step(...). Use the Read tool on the after-screenshot
       to assess pass/fail against step["expected"]. Capture body text and DOM on FAIL.

@@ -22,6 +22,7 @@ The runner is universal — it knows nothing about your specific app's selectors
 | `--profile` | No | Path to an app-profile markdown file (`run-app-profile.md`) |
 | `--skip-to` | No | TC key to resume from |
 | `--headed` | No | Launch a visible browser (default is headless) |
+| `--sso` | No | Force SSO pre-authentication before execution. Also auto-enabled if the app redirects to a known identity provider. Currently supports Microsoft Entra ID (TOTP/MFA) — see `run-sso-profile.md` |
 
 Credentials are **never** accepted as command-line parameters. They come from environment variables that the QA sets up separately. See "Credentials" below.
 
@@ -92,10 +93,28 @@ If `--input <PATH>`: load and validate the JSON. Schema check: array of objects,
 
 ### Phase R2 — Verify environment
 
-1. Reach the `--url` — `urllib.request.urlopen(url, timeout=30)`. If HTTP 5xx or unreachable, stop with `ENVIRONMENT_UNAVAILABLE: <url>`.
+1. Reach the `--url` — `urllib.request.urlopen(url, timeout=30)`. If HTTP 5xx or unreachable, stop with `ENVIRONMENT_UNAVAILABLE: <url>`. **Note the final URL after redirects** — if it lands on a known identity provider host (`login.microsoftonline.com`, `okta.com`, `auth0.com`, `accounts.google.com`, `login.live.com`), the app uses SSO; treat as if `--sso` was passed.
 2. Verify Playwright is installed (`python -c "from playwright.sync_api import sync_playwright"`).
 3. Verify credentials per role (per the app profile or default convention).
 4. Optionally load the app profile from `--profile <path>` — see `run-app-profile.md`.
+
+### Phase R2.5 — SSO pre-authentication (only if `--sso` or SSO auto-detected)
+
+Read `references/run-sso-profile.md` and follow it. In short:
+
+1. Confirm the SSO env vars are set (`TEST_EMAIL`, `TEST_PASSWORD`, `TEST_TOTP_SECRET` for Microsoft). If any are missing, stop and tell the user exactly which.
+2. Run the SSO auth script once to mint a reusable session:
+   ```bash
+   python <ABSOLUTE_PATH_TO_SKILL>/scripts/ms_sso_auth.py \
+     --url <BASE_URL> --output output/auth/storage_state.json
+   ```
+3. If it exits non-zero or `output/auth/storage_state.json` is not written, stop run mode with `SSO_AUTH_FAILED` and surface the script's last printed URL/title.
+4. Export two env vars so the execution subagents (and mid-run re-auth) can find the session:
+   - `SSO_STORAGE_STATE=output/auth/storage_state.json`
+   - `SSO_AUTH_SCRIPT=<ABSOLUTE_PATH_TO_SKILL>/scripts/ms_sso_auth.py`
+5. Set `STORAGE_STATE_PATH = "output/auth/storage_state.json"` for use in Phase R6. When SSO is **not** active, `STORAGE_STATE_PATH` is `None`.
+
+This runs **once** per execution — every role subagent reuses the same storage state, so the TOTP/MFA flow never repeats per test case.
 
 ### Phase R3 — Assign Run ID and create output dirs
 
@@ -148,6 +167,7 @@ Group TCs by `user` (role). For each role, spawn one execution subagent **in par
 - Its TC subset
 - Run ID, output paths
 - The app profile (if any)
+- `STORAGE_STATE_PATH` from Phase R2.5 (or `None` if SSO is not active) — the subagent passes this to `launch_browser(..., storage_state=STORAGE_STATE_PATH)` and `do_login(..., storage_state=STORAGE_STATE_PATH)` so SSO sessions are reused and never cleared
 
 Read `run-playwright-runner.md` for the full runner skeleton and the subagent template. The runner takes a before/after screenshot for every step, then uses Claude vision to assess pass/fail against the `expected` field.
 
@@ -266,3 +286,5 @@ Always write `results.json` and `run-report.json` even on early abort, with `"st
 - **Bug filing is fire-and-forget** — never block step execution waiting for a bug to be filed.
 - **Xray upload is fire-and-forget** — runs after the summary prints.
 - **Use `domcontentloaded`, not `networkidle`** — many SPAs with polling never reach networkidle.
+- **With SSO active, never `clear_session()`** — clearing cookies destroys the SSO session. The pre-auth storage state is authenticated once and reused for every TC; re-auth happens automatically only if the session expires mid-run.
+- **SSO pre-auth runs exactly once** (Phase R2.5) — never per test case. Credentials come from env vars (`TEST_EMAIL`/`TEST_PASSWORD`/`TEST_TOTP_SECRET`), never from CLI params.
