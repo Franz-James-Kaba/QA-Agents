@@ -54,15 +54,23 @@ except ImportError:
 # Selectors (ported from LoginPage.java)
 # ---------------------------------------------------------------------------
 
-SEL_EMAIL         = '//input[@type="email" and @name="loginfmt"]'
-SEL_NEXT          = '//input[@type="submit" and @data-report-trigger="click"]'
-SEL_PASSWORD      = '//input[@name="passwd" and @type="password"]'
-SEL_SIGN_IN       = '//input[@type="submit" and @data-report-event="Signin_Submit"]'
+# Microsoft Entra ID uses stable element IDs across tenants:
+#   #i0116      = email field (name=loginfmt)
+#   #i0118      = password field (name=passwd)
+#   #idSIButton9 = the primary submit button, REUSED for Next, Sign in, and Yes
+# The data-report-* attributes used by some tenants are not universal — IDs are.
+SEL_EMAIL         = '#i0116'
+SEL_NEXT          = '#idSIButton9'
+SEL_PASSWORD      = '#i0118'
+SEL_SIGN_IN       = '#idSIButton9'
 SEL_OTP_FIELD     = '#idTxtBx_SAOTCC_OTC'
+# On the number-match screen the escape-hatch button is id=signInAnotherWay and it
+# appears with a delay (~8s). Older tenants use idA_SAOTCS_SendCode / "right now" link.
 SEL_CANT_USE      = (
-    '//a[contains(normalize-space(),"right now")] | '
-    '//a[@id="idA_SAOTCS_SendCode"] | '
-    '//a[contains(normalize-space(),"can\'t use")]'
+    '#signInAnotherWay, '
+    'a#idA_SAOTCS_SendCode, '
+    'a:has-text("right now"), '
+    'a:has-text("can\'t use")'
 )
 SEL_TOTP_OPTION   = (
     '(//div | //a | //li | //button)'
@@ -77,17 +85,18 @@ SEL_VERIFY        = (
 )
 SEL_STAY_SIGNED   = '//input[@type="submit" and (@value="Yes" or @value="No")]'
 
-# JS fallback for TOTP option click (mirrors JavascriptExecutor fallback in Java)
-JS_CLICK_TOTP = """
-var elems = Array.from(document.querySelectorAll('a,button,li,div[role],div[tabindex],span[tabindex]'));
-var t = elems.find(function(e) {
-    var txt = (e.textContent || '').trim();
-    return txt === 'Use a verification code' ||
-           (txt.indexOf('verification code') >= 0 && txt.length < 80);
-});
-if (t) { t.click(); return true; }
-return false;
-"""
+# JS fallback for TOTP option click (mirrors JavascriptExecutor fallback in Java).
+# Must be an arrow function — page.evaluate wraps the body and a bare return is illegal.
+JS_CLICK_TOTP = """() => {
+    var elems = Array.from(document.querySelectorAll('a,button,li,div[role],div[tabindex],span[tabindex]'));
+    var t = elems.find(function(e) {
+        var txt = (e.textContent || '').trim();
+        return txt === 'Use a verification code' ||
+               (txt.indexOf('verification code') >= 0 && txt.length < 80);
+    });
+    if (t) { t.click(); return true; }
+    return false;
+}"""
 
 
 # ---------------------------------------------------------------------------
@@ -137,9 +146,10 @@ def handle_mfa(page, totp_secret):
     if not otp_visible:
         time.sleep(3)
 
-        # Pattern A: push-notification screen — click "I can't use..." link first
+        # Pattern A: number-match screen — click "I can't use..." link first.
+        # This button appears with a delay (~8s) and can be slower under throttling.
         try:
-            cant_use = page.wait_for_selector(SEL_CANT_USE, timeout=20_000)
+            cant_use = page.wait_for_selector(SEL_CANT_USE, timeout=30_000)
             print(f"Clicking 'I can't use...' link: '{cant_use.inner_text().strip()}'")
             cant_use.click()
             time.sleep(2)
@@ -175,6 +185,10 @@ def handle_mfa(page, totp_secret):
 
         if not totp_clicked:
             print(f"WARNING: TOTP method option not found by any strategy. URL: {page.url}")
+            try:
+                page.screenshot(path="output/auth/_mfa_fallback_state.png")
+            except Exception:
+                pass
             handle_stay_signed_in(page)
             return
 
@@ -251,23 +265,42 @@ def authenticate(app_url, output_path, headless=True):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=headless)
         context = browser.new_context()
+        # Dev/staging apps and the Microsoft login page can be slow, so allow
+        # generous time for both navigation and element actions.
+        context.set_default_navigation_timeout(90_000)
+        context.set_default_timeout(60_000)
         page = context.new_page()
 
-        # 1. Navigate → triggers Microsoft redirect
+        # 1. Navigate → app does a client-side redirect to Microsoft.
+        # Retry the initial load once — cold dev servers frequently exceed the first wait.
         print(f"Navigating to {app_url} ...")
-        page.goto(app_url, wait_until="domcontentloaded")
+        try:
+            page.goto(app_url, wait_until="domcontentloaded", timeout=60_000)
+        except PWTimeout:
+            print("First navigation timed out — retrying once...")
+            page.goto(app_url, wait_until="domcontentloaded", timeout=90_000)
 
-        # 2. Email
+        # Wait for the redirect to Microsoft to complete before touching the form
+        try:
+            page.wait_for_url("**login.microsoftonline.com**", timeout=30_000)
+        except PWTimeout:
+            print(f"WARNING: did not redirect to Microsoft login — URL: {page.url}")
+
+        # 2. Email — use locator().click() on the submit button. The Next/Sign-in/Yes
+        # buttons all share id=idSIButton9; locator clicks auto-wait for enabled+stable
+        # and survive the lightbox overlay / element re-rendering. (press(Enter) does
+        # NOT reliably submit these forms.)
         print("Filling email...")
-        page.wait_for_selector(SEL_EMAIL, timeout=25_000)
-        page.fill(SEL_EMAIL, email)
-        page.click(SEL_NEXT)
+        page.locator(SEL_EMAIL).wait_for(state="visible", timeout=60_000)
+        page.locator(SEL_EMAIL).fill(email)
+        page.locator(SEL_NEXT).click()
 
-        # 3. Password
+        # 3. Password — the field exists hidden on the email screen, so wait for it to
+        # become genuinely visible before filling.
         print("Filling password...")
-        page.wait_for_selector(SEL_PASSWORD, timeout=30_000)
-        page.fill(SEL_PASSWORD, password)
-        page.click(SEL_SIGN_IN)
+        page.locator(SEL_PASSWORD).wait_for(state="visible", timeout=30_000)
+        page.locator(SEL_PASSWORD).fill(password)
+        page.locator(SEL_SIGN_IN).click()
 
         # 4–6. MFA
         print("Handling MFA...")

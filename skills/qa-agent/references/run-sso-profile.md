@@ -22,6 +22,10 @@ Instead of repeating the full MFA flow for every test case, the script authentic
 **once**, saves the browser session to `output/auth/storage_state.json`, and every
 subsequent TC context loads that file — zero auth overhead per TC.
 
+> **Verified working** against the ARMS dev tenant (Entra ID number-match MFA → TOTP
+> bypass). A successful run saves ~22 cookies (incl. Microsoft auth cookies) + app
+> localStorage. The script is resilient to the non-deterministic MFA screen ordering.
+
 ```
 run mode start
     │
@@ -125,8 +129,15 @@ Java/Selenium implementation — same RFC 6238 algorithm, same TOTP secret forma
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Script times out at email field | App didn't redirect to Microsoft login | Confirm `--url` is the right app URL |
+| Script times out at email field | App/Microsoft login slow to load, or too many recent logins triggered risk-based throttling | The script already retries navigation and uses 60–90s timeouts. If it persists, wait a few minutes — repeated rapid logins throttle the account |
 | OTP rejected 5 times | Wrong TOTP secret or clock drift | Verify `TEST_TOTP_SECRET` matches `otp.secret`; check system clock is NTP-synced |
 | "TOTP method option not found" | Microsoft tenant uses different MFA method text | Run with `--headed`, observe the method-choice screen, add the text to `SEL_TOTP_OPTION` in the script |
 | Session expires mid-run | Token TTL shorter than run duration | Reduce TC batch size or implement the mid-run re-auth check in Step 4 |
 | `storage_state.json` not accepted | Context created before file was written | Ensure auth script completes before the first `new_context()` call |
+
+### Verified selector notes (ARMS / Entra ID)
+
+- Email `#i0116`, password `#i0118`, primary submit `#idSIButton9` (reused for Next / Sign in / Yes — use `locator().click()`, **not** `press("Enter")`, which does not submit these forms).
+- Number-match MFA escape link is `#signInAnotherWay` and appears with a **~8s delay** — the script waits up to 30s for it.
+- After clicking it, "Use a verification code" leads to OTP field `#idTxtBx_SAOTCC_OTC`.
+- MFA screen ordering is non-deterministic; the script tolerates either the number-match-then-bypass path or a direct method-choice screen.
