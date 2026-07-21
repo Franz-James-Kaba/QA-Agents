@@ -45,7 +45,11 @@ def _get_token() -> str:
         return _cache["token"]
     if not CLIENT_ID or not CLIENT_SECRET:
         raise RuntimeError(
-            "XRAY_CLIENT_ID and XRAY_CLIENT_SECRET environment variables are not set."
+            "The hosted Xray MCP server is misconfigured on the server side and cannot "
+            "authenticate to Xray right now. This is NOT something you need to fix — you do "
+            "not need any Xray credentials to use the hosted server. Please contact the "
+            "QA-Agents maintainer to restore the server's Xray API key. "
+            "(Server missing XRAY_CLIENT_ID / XRAY_CLIENT_SECRET.)"
         )
     payload = json.dumps({"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET}).encode()
     req = urllib.request.Request(
