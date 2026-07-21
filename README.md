@@ -11,9 +11,9 @@ A complete automated QA pipeline for Jira + Xray Cloud projects, built as Claude
 
 ## What's New
 
-- **🔐 Microsoft SSO bypass.** Run mode now authenticates through Microsoft Entra ID (Azure AD) automatically — email → password → number-match MFA → TOTP — and reuses the session across the whole run. No more manual login, no per-test-case auth. See [SSO Authentication](#sso-authentication).
-- **⚡ Orchestrator + worker architecture.** The skill runs as a two-tier system: a **power model (Opus) orchestrator** keeps the judgment work and delegates all mechanical, parallelizable work to cheaper **Sonnet workers**. Big token savings with a quality-preserving escalation path. See [Architecture](#architecture-orchestrator--workers).
-- **📊 Silent self-assessment.** After every session the agent grades its own performance against an objective rubric and files a structured report to the maintainer — a continuous quality loop.
+- **🔐 Microsoft SSO bypass.** Run mode authenticates through Microsoft Entra ID (Azure AD) automatically — email → password → number-match MFA → TOTP — and reuses the session across the whole run. See [SSO Authentication](#sso-authentication).
+- **⚡ Orchestrator + worker architecture.** A power-model orchestrator keeps the judgment work and delegates mechanical work to cheaper worker models. Big token savings with a quality-preserving escalation path. See [Architecture](#architecture-orchestrator--workers).
+- **📊 Silent self-assessment.** After every session the agent grades its own performance and files a structured report to the maintainer.
 
 ---
 
@@ -30,66 +30,31 @@ A complete automated QA pipeline for Jira + Xray Cloud projects, built as Claude
 
 ---
 
-## Prerequisites
+## ⚡ Install This Agent (instructions for an AI agent)
 
-| Requirement | Version | Notes |
-|-------------|---------|-------|
-| [Claude Code](https://claude.ai/download) | Latest | The desktop app that runs these skills |
-| Python | 3.10+ | `python --version` |
-| Node.js + npm | 18+ | Required for the Jira MCP (`npm --version`) |
-| Jira + Xray Cloud | — | Project must have Xray Cloud installed |
-| Atlassian API token | — | Generate at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) |
-| Xray API key pair | — | Generate at Xray → Global Settings → API Keys |
+**If you are an AI agent (Claude Code, or similar) with access to this repository, follow these steps exactly to install the QA Agent for the user. Do not skip steps. Do not ask the user for any Xray credentials — the Xray connection is hosted and needs none.**
 
----
-
-## Quick Install (5 minutes)
-
+**Step 1 — Locate the repo.** You are either already inside the cloned `QA-Agents` repo, or you must clone it first:
 ```bash
-# 1. Clone this repo
 git clone https://github.com/Franz-James-Kaba/QA-Agents.git
 cd QA-Agents
-
-# 2. Copy the qa-agent skill into Claude Code
-#    Mac/Linux:
-cp -r skills/qa-agent ~/.claude/skills/
-#    Windows (PowerShell):
-xcopy /E /I skills\qa-agent "$env:USERPROFILE\.claude\skills\qa-agent"
-
-# 3. Install Playwright (needed for run mode)
-pip install playwright
-python -m playwright install chromium
 ```
 
-Then follow the **Connect MCP Servers** and **Set Environment Variables** steps below, and restart Claude Code.
+**Step 2 — Copy the skills into the user's Claude Code skills directory.**
 
----
-
-## Connect MCP Servers
-
-Both the **Jira MCP** and the **Xray MCP** must be connected for the skills to work.
-
-### 1 — Jira MCP
-
-Add to your project's `.claude/mcp.json` (create the file if it doesn't exist):
-
-```json
-{
-  "mcpServers": {
-    "jira": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-rovo"]
-    }
-  }
+Mac/Linux:
+```bash
+mkdir -p ~/.claude/skills
+cp -r skills/qa-agent skills/test-case-generator skills/manual-executor skills/bug-maester ~/.claude/skills/
+```
+Windows (PowerShell):
+```powershell
+foreach ($s in @("qa-agent","test-case-generator","manual-executor","bug-maester")) {
+    xcopy /E /I "skills\$s" "$env:USERPROFILE\.claude\skills\$s"
 }
 ```
 
-On first use, Claude Code will prompt you to authenticate with your Atlassian account.
-
-### 2 — Xray MCP (hosted — recommended)
-
-A shared Xray MCP server is already deployed at `https://xray-mcp-server.vercel.app`. Add it alongside jira in your `.claude/mcp.json`:
-
+**Step 3 — Write the MCP configuration.** Create or update `.claude/mcp.json` in the user's project root with **exactly** this content. The Xray server is hosted — use the live URL as-is and set no Xray credentials:
 ```json
 {
   "mcpServers": {
@@ -105,31 +70,111 @@ A shared Xray MCP server is already deployed at `https://xray-mcp-server.vercel.
 }
 ```
 
-> This server is pre-configured with shared Xray credentials. If your project uses different Xray credentials, see [Run Your Own Xray MCP Server](#run-your-own-xray-mcp-server) below.
+**Step 4 — Install runtime dependencies** (needed for run mode / execution):
+```bash
+pip install playwright pyotp
+python -m playwright install chromium
+```
 
-### 3 — Restart Claude Code
+**Step 5 — Set the user's Atlassian credentials** as environment variables (ask the user for these two values — they are the only credentials required):
+```bash
+# Mac/Linux
+export JIRA_EMAIL="user@company.com"
+export JIRA_API_TOKEN="user_atlassian_api_token"
+```
+```powershell
+# Windows
+[System.Environment]::SetEnvironmentVariable("JIRA_EMAIL", "user@company.com", "User")
+[System.Environment]::SetEnvironmentVariable("JIRA_API_TOKEN", "user_atlassian_api_token", "User")
+```
 
-Changes to `mcp.json` require a restart to take effect.
+**Step 6 — Tell the user to restart Claude Code** so the skills and MCP servers load.
+
+**Step 7 — Verify.** After restart, confirm the skill responds to `/qa-agent` and that `mcp__jira__*` and `mcp__xray__*` tools are available. The user does **not** need Xray API keys — if anything asks for `XRAY_CLIENT_ID` or `XRAY_CLIENT_SECRET`, that is a hosted-server issue for the maintainer, not a user action (see [Troubleshooting](#troubleshooting)).
 
 ---
 
-## Set Environment Variables
+## Prerequisites (for manual install)
 
-The skills need your Atlassian credentials to create Jira issues and read sprint data.
+| Requirement | Version | Notes |
+|-------------|---------|-------|
+| [Claude Code](https://claude.ai/download) | Latest | Runs these skills |
+| Python | 3.10+ | `python --version` — for Playwright / SSO |
+| Node.js + npm | 18+ | `npm --version` — for the Jira MCP |
+| Jira + Xray Cloud project | — | Your project must have Xray Cloud installed |
+| Atlassian API token | — | The only credential you provide. Generate at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) |
 
-**Mac/Linux** — add to `~/.bashrc` or `~/.zshrc`:
+> **You do NOT need Xray API keys.** The Xray connection uses a shared hosted server that already holds its own credentials.
+
+---
+
+## Manual Install (step by step)
+
+Follow these in order, then restart Claude Code.
+
+### 1. Clone the repo
+```bash
+git clone https://github.com/Franz-James-Kaba/QA-Agents.git
+cd QA-Agents
+```
+
+### 2. Install the skills
+
+Mac/Linux:
+```bash
+mkdir -p ~/.claude/skills
+cp -r skills/qa-agent skills/test-case-generator skills/manual-executor skills/bug-maester ~/.claude/skills/
+```
+Windows (PowerShell):
+```powershell
+foreach ($s in @("qa-agent","test-case-generator","manual-executor","bug-maester")) {
+    xcopy /E /I "skills\$s" "$env:USERPROFILE\.claude\skills\$s"
+}
+```
+
+### 3. Connect the MCP servers
+
+Create or update `.claude/mcp.json` in your project root with both servers. **Copy this exactly** — the Xray server is hosted, so there are no Xray credentials to set:
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-rovo"]
+    },
+    "xray": {
+      "type": "sse",
+      "url": "https://xray-mcp-server.vercel.app/sse"
+    }
+  }
+}
+```
+On first use, Claude Code prompts you to authenticate the Jira MCP with your Atlassian account. The Xray MCP connects with no prompt.
+
+### 4. Set your Atlassian credentials
+
+The only credentials you provide are your Atlassian email and API token:
+
+Mac/Linux (add to `~/.bashrc` or `~/.zshrc`):
 ```bash
 export JIRA_EMAIL="your@email.com"
 export JIRA_API_TOKEN="your_atlassian_api_token"
 ```
-
-**Windows** — add as system environment variables (PowerShell):
+Windows (PowerShell):
 ```powershell
 [System.Environment]::SetEnvironmentVariable("JIRA_EMAIL", "your@email.com", "User")
 [System.Environment]::SetEnvironmentVariable("JIRA_API_TOKEN", "your_atlassian_api_token", "User")
 ```
 
-Or set them in your project's `.claude/mcp.json` under an `env` block if you prefer project-scoped credentials.
+### 5. Install runtime dependencies (for run mode)
+```bash
+pip install playwright pyotp
+python -m playwright install chromium
+```
+
+### 6. Restart Claude Code
+
+Skills and MCP servers load at startup. After restart, `/qa-agent` is ready.
 
 ---
 
@@ -155,10 +200,9 @@ Launches a Playwright browser, runs each TC step by step with before/after scree
 /run --from-xray TBL-123 --url http://your-staging-url --env staging
 /run --from-xray TBL-123 --url https://app.example.com --sso     ← Microsoft SSO apps
 execute tests for TBL-456 against http://staging.example.com
-run manual tests
 ```
 
-For apps behind Microsoft login, add `--sso` (or just let run mode auto-detect the redirect). See [SSO Authentication](#sso-authentication).
+For apps behind Microsoft login, add `--sso` (or let run mode auto-detect the redirect). See [SSO Authentication](#sso-authentication).
 
 ### Bug mode — file bug tickets
 
@@ -188,7 +232,7 @@ report a bug: the login button stays disabled when the form is valid
 
 ## SSO Authentication
 
-Many enterprise apps sit behind Microsoft Entra ID (Azure AD) with MFA — a wall that normally breaks browser automation. Run mode handles it with a bundled, battle-tested script (`skills/qa-agent/scripts/ms_sso_auth.py`).
+Many enterprise apps sit behind Microsoft Entra ID (Azure AD) with MFA — a wall that normally breaks browser automation. Run mode handles it with a bundled, verified script (`skills/qa-agent/scripts/ms_sso_auth.py`).
 
 ### How it works
 
@@ -204,48 +248,40 @@ Many enterprise apps sit behind Microsoft Entra ID (Azure AD) with MFA — a wal
    (auth never repeats per test — zero per-TC overhead)
 ```
 
-The full flow is automated: it enters the email and password, clicks **"I can't use my Microsoft Authenticator app right now"** on the number-match screen, selects **"Use a verification code"**, generates the current TOTP from your test account's secret, and saves the authenticated browser session. If the session expires mid-run, it re-authenticates automatically.
+It enters the email and password, clicks **"I can't use my Microsoft Authenticator app right now"** on the number-match screen, selects **"Use a verification code"**, generates the current TOTP from your test account's secret, and saves the authenticated session. If the session expires mid-run, it re-authenticates automatically.
 
-### Setup
+### Setup (only if you test SSO-protected apps)
 
 Set three environment variables for your **test account** (never a personal account):
 
-**Mac/Linux:**
+Mac/Linux:
 ```bash
 export TEST_EMAIL="testuser@yourcompany.com"
 export TEST_PASSWORD="your_test_password"
 export TEST_TOTP_SECRET="base32secretfromauthenticator"
 ```
-
-**Windows (PowerShell):**
+Windows (PowerShell):
 ```powershell
 [System.Environment]::SetEnvironmentVariable("TEST_EMAIL", "testuser@yourcompany.com", "User")
 [System.Environment]::SetEnvironmentVariable("TEST_PASSWORD", "your_test_password", "User")
 [System.Environment]::SetEnvironmentVariable("TEST_TOTP_SECRET", "base32secretfromauthenticator", "User")
 ```
 
-> **`TEST_TOTP_SECRET`** is the Base32 seed shown when you set up the authenticator for the test account (the same value an `otp.secret` config would hold). The script uses `pyotp` — RFC 6238, identical to Google Authenticator / `com.warrenstrange:googleauth`.
+> **`TEST_TOTP_SECRET`** is the Base32 seed shown when you set up the authenticator for the test account. The script uses `pyotp` — RFC 6238, identical to Google Authenticator.
 
-Install the dependency:
-```bash
-pip install pyotp
-```
-
-### Run it standalone (to verify)
-
+### Verify it standalone
 ```bash
 python skills/qa-agent/scripts/ms_sso_auth.py \
   --url https://your-app --output output/auth/storage_state.json
 # add --headed to watch the browser
 ```
-
 A successful run saves ~22 cookies plus app localStorage to `storage_state.json`. Full details and troubleshooting: `skills/qa-agent/references/run-sso-profile.md`.
 
 ---
 
 ## Architecture: Orchestrator + Workers
 
-`qa-agent` runs as a **two-tier system** for token efficiency. The dispatcher is the **orchestrator** (run it on a power model like Opus); it keeps the judgment work and delegates everything mechanical to cheaper **Sonnet workers**.
+`qa-agent` runs as a **two-tier system** for token efficiency. The dispatcher is the **orchestrator** (run it on a power model like Opus); it keeps the judgment work and delegates everything mechanical to cheaper **worker models (Sonnet)**.
 
 ```
 ┌────────────────────────────────────────────────────────┐
@@ -266,130 +302,37 @@ A successful run saves ~22 cookies plus app localStorage to `storage_state.json`
 
 **Why it saves tokens:** the bulk of output (dozens of TC steps, long bug descriptions, many execution steps) is mechanical. Opus costs ~5× Sonnet per token, so moving that volume to Sonnet while reserving Opus for high-leverage judgment is where the savings come from.
 
-**Quality is preserved by an escalation path:** a worker that hits a low-confidence decision (an ambiguous screenshot, a contradicting acceptance criterion) flags `needs_orchestrator_review` instead of guessing, and the orchestrator resolves just those cases on the power model. The easy 90% stays on Sonnet; the hard 10% gets Opus judgment.
+**Quality is preserved by an escalation path:** a worker that hits a low-confidence decision flags `needs_orchestrator_review` instead of guessing, and the orchestrator resolves just those cases on the power model.
 
-> **To get the full benefit**, run the qa-agent session on Opus. Worker delegation happens automatically via the Agent tool's `model` parameter. Details: `skills/qa-agent/references/orchestrator-protocol.md`.
+> **To get the full benefit**, run the qa-agent session on Opus. Delegation happens automatically via the Agent tool's `model` parameter. Details: `skills/qa-agent/references/orchestrator-protocol.md`.
 
 ---
 
 ## Other Skills
 
 ### test-case-generator
-
 Standalone TC generator — same as `qa-agent` plan mode but as a separate skill.
-
 ```
 generate test cases
 create test plan for active sprint
 ```
 
 ### manual-executor
-
 Standalone test runner with extended options for parallel sessions and account provisioning.
-
 ```
 /manual-executor --from-xray TBL-XXX --url http://staging --env staging
 /manual-executor --input output/test-cases/TBL-XXX.json --url http://localhost:4200
 /manual-executor --from-xray TBL-XXX --url http://... --skip-to TBL-YYY
 ```
-
-Output written to:
-```
-output/
-  screenshots/{RUN_ID}/     ← PNG per step
-  results/{RUN_ID}/
-    results.json
-    run-report.md
-    pw_runner.py
-```
+Output written to `output/screenshots/{RUN_ID}/` and `output/results/{RUN_ID}/` (`results.json`, `run-report.md`, `pw_runner.py`).
 
 ### bug-maester
-
 Standalone bug filer with an audit pass that repairs any existing open bug descriptions before creating new ones.
-
 ```
 report a bug: description here
 /bug-maester TBL-217        ← from a specific Test Execution
 /bug-maester all            ← all executions in the project
 ```
-
----
-
-## Install All Skills
-
-To install all four skills at once:
-
-**Mac/Linux:**
-```bash
-cp -r skills/qa-agent ~/.claude/skills/
-cp -r skills/test-case-generator ~/.claude/skills/
-cp -r skills/manual-executor ~/.claude/skills/
-cp -r skills/bug-maester ~/.claude/skills/
-```
-
-**Windows (PowerShell):**
-```powershell
-foreach ($skill in @("qa-agent","test-case-generator","manual-executor","bug-maester")) {
-    xcopy /E /I "skills\$skill" "$env:USERPROFILE\.claude\skills\$skill"
-}
-```
-
-Restart Claude Code after copying.
-
----
-
-## Run Your Own Xray MCP Server
-
-If your project uses different Xray credentials than the shared server, you can deploy your own instance.
-
-### Option A — Local (stdio)
-
-Copy `xray-mcp/server.py` to your project root and update `.claude/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "xray": {
-      "command": "python",
-      "args": ["xray-mcp/server.py"],
-      "env": {
-        "XRAY_CLIENT_ID": "your_client_id",
-        "XRAY_CLIENT_SECRET": "your_client_secret"
-      }
-    }
-  }
-}
-```
-
-Install the dependency: `pip install mcp`
-
-### Option B — Deploy to Vercel
-
-1. Install Vercel CLI: `npm i -g vercel`
-2. Deploy: `vercel --prod`
-3. Set secrets:
-   ```bash
-   vercel env add XRAY_CLIENT_ID
-   vercel env add XRAY_CLIENT_SECRET
-   vercel --prod
-   ```
-4. Update your `mcp.json` with the new URL:
-   ```json
-   { "mcpServers": { "xray": { "type": "sse", "url": "https://your-project.vercel.app/sse" } } }
-   ```
-
-### Xray MCP tools available
-
-| Tool | What it does |
-|------|--------------|
-| `authenticate` | Verify credentials, return token TTL |
-| `add_test_step` / `update_test_step` / `remove_test_step` | Manage steps on a Test issue |
-| `get_test_steps` | Read all steps on a Test issue |
-| `get_test_runs` | Fetch all runs (with run IDs) from a Test Execution |
-| `update_test_run_status` | Set PASS/FAIL/TODO/EXECUTING/ABORTED on a run |
-| `get_test_execution_failures` | Read failed results from a Test Execution |
-| `add_tests_to_test_set/plan/execution` | Link Tests into Xray artefacts |
-| `add_test_executions_to_test_plan` | Link Executions into a Test Plan |
 
 ---
 
@@ -399,13 +342,22 @@ Install the dependency: `pip install mcp`
 → Check the skill was copied to `~/.claude/skills/<skill-name>/SKILL.md` and restart Claude Code.
 
 **`mcp__xray__*` tools unavailable**
-→ Verify the `xray` entry is in your `.claude/mcp.json` and Claude Code was restarted after the change.
+→ Verify the `xray` entry in `.claude/mcp.json` is exactly `{ "type": "sse", "url": "https://xray-mcp-server.vercel.app/sse" }` and restart Claude Code.
+
+**Prompted to set `XRAY_CLIENT_ID` / `XRAY_CLIENT_SECRET`**
+→ You should never need these. The hosted Xray server holds its own credentials. If you see this, either (a) your `xray` entry is pointing at a local/self-hosted server instead of the hosted URL above — fix the config — or (b) the hosted server has lost its credentials and the **maintainer** needs to restore them. It is never a user action.
 
 **`mcp__jira__*` tools unavailable**
 → Verify the `jira` entry is in `.claude/mcp.json`. Run `npx -y @modelcontextprotocol/server-rovo` manually to confirm npm can reach it.
 
 **Playwright errors on form filling**
-→ The generic runner uses label-based locators. If the app uses placeholder text instead of `<label>` elements, override with `get_by_placeholder()` or `#id` selectors. See `run-mode.md` in the `qa-agent` references for details.
+→ The generic runner uses label-based locators. If the app uses placeholder text instead of `<label>` elements, override with `get_by_placeholder()` or `#id` selectors. See `run-mode.md` in the `qa-agent` references.
 
 **Xray SSE connection timeout**
-→ Vercel Hobby plan has a 10s function timeout. Upgrade to Pro (60s) or use the local stdio option.
+→ Transient hosted-server cold start; retry. If it persists, contact the maintainer.
+
+---
+
+## Maintainers
+
+The Xray MCP server source and its Vercel deployment live in this repo: `api/index.py` (the hosted SSE server) and `xray-mcp/server.py` (a local stdio variant), with `vercel.json` for the deployment. Hosted credentials (`XRAY_CLIENT_ID` / `XRAY_CLIENT_SECRET`) are stored as Vercel environment variables on the deployment — end users never set these. To rotate them: `vercel login`, then update the Vercel project's environment variables (Production) and run `vercel --prod` to redeploy.
