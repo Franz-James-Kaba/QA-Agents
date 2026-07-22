@@ -76,7 +76,10 @@ pip install playwright pyotp
 python -m playwright install chromium
 ```
 
-**Step 5 — Set the user's Atlassian credentials** as environment variables (ask the user for these two values — they are the only credentials required):
+**Step 5 (optional) — Connect Atlassian.** First ask the user how they run Claude:
+
+- **Claude desktop app →** tell them to use the **built-in Atlassian connector** instead of setting anything manually: Settings → Connectors → Atlassian → Connect, and sign in. No credentials, no env vars, and the `jira` entry in `mcp.json` is not required. This is the recommended path for desktop users. **Skip the commands below.**
+- **Terminal / CLI only →** set the Atlassian credentials as environment variables (ask the user for these two values):
 ```bash
 # Mac/Linux
 export JIRA_EMAIL="user@company.com"
@@ -102,9 +105,10 @@ export JIRA_API_TOKEN="user_atlassian_api_token"
 | Python | 3.10+ | `python --version` — for Playwright / SSO |
 | Node.js + npm | 18+ | `npm --version` — for the Jira MCP |
 | Jira + Xray Cloud project | — | Your project must have Xray Cloud installed |
-| Atlassian API token | — | The only credential you provide. Generate at [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) |
+| Atlassian access | — | **Desktop app:** the built-in Atlassian connector (no token). **Terminal only:** an API token from [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens) |
 
 > **You do NOT need Xray API keys.** The Xray connection uses a shared hosted server that already holds its own credentials.
+> **Desktop app users** connect Atlassian through the app's built-in connector — no token required.
 
 ---
 
@@ -151,9 +155,11 @@ Create or update `.claude/mcp.json` in your project root with both servers. **Co
 ```
 On first use, Claude Code prompts you to authenticate the Jira MCP with your Atlassian account. The Xray MCP connects with no prompt.
 
-### 4. Set your Atlassian credentials
+### 4. Connect Atlassian (optional — pick one)
 
-The only credentials you provide are your Atlassian email and API token:
+**Using the Claude desktop app?** Use the built-in Atlassian connector instead of any manual setup: **Settings → Connectors → Atlassian → Connect** and sign in. No credentials or env vars needed, and you can skip the `jira` entry in `mcp.json`. This is the recommended path.
+
+**Using the terminal / CLI only?** Provide your Atlassian email and API token as environment variables:
 
 Mac/Linux (add to `~/.bashrc` or `~/.zshrc`):
 ```bash
