@@ -1,6 +1,7 @@
 xray-mcp/
 skills/
 output/
+docs/
 *.pyc
 __pycache__/
 .git/
